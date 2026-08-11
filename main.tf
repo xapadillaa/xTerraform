@@ -1,0 +1,209 @@
+
+// just in case need a specific version of Terraform or aws provider
+/*
+terraform {
+  required_version = ">= 1.6.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "6.58.0"
+    }
+  }
+}
+*/
+
+provider "aws" {
+  region = "us-west-1"
+}
+
+
+variable "provicioning_ec2" {
+  description = "Path to the script that will install first set up in the server."
+  type        = string
+  default     = "/scripts/ec2_dependecies.sh"
+
+}
+
+variable "server_ami" {
+  description = "AMI to use"
+  type        = string
+  default     = "ami-032cd1a6d943449a4"
+}
+
+variable "server_port" {
+  description = "The port the server will use for HTTP request"
+  type        = number
+  default     = 8080
+}
+
+// EC2 instances require a Segurity Group definition
+resource "aws_security_group" "sg_ec2" {
+  name        = "tf-sg-ec2"
+  description = "Security group for EC2 instances"
+
+  ingress {
+    from_port   = var.server_port
+    to_port     = var.server_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+
+// aws launch configuration is deprecated, use aws template 
+resource "aws_launch_template" "launch_template" {
+  name                   = "tf-launch-template"
+  description            = "Launch template configuration"
+  image_id               = var.server_ami
+  instance_type          = "t2.micro"
+  vpc_security_group_ids = [aws_security_group.sg_ec2.id]
+
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  user_data = base64encode(var.provicioning_ec2)
+}
+
+// Auto Scaling Group require a configuration to be launched. What you configure here is the EC2 instanes that will integrate 
+// the groups of EC2 instances for the ASG
+
+resource "aws_autoscaling_group" "tf-example" {
+
+  vpc_zone_identifier = data.aws_subnets.default.ids
+
+  launch_template {
+    id      = aws_launch_template.launch_template.id
+    version = "$Latest"
+  }
+
+  //launch_configuration = aws_launch_configuration.asg_launch_configuration.name
+  desired_capacity = 2
+  min_size         = 1
+  max_size         = 4
+
+}
+
+
+//this data source fetch default VPC set in the AWS 
+
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+
+
+/*
+ There are exist three types of load balancers n AWS :
+ - Application load balancer
+ - Networking load balancer
+ - classic load balancer
+*/
+
+//Create AWS Application Load Balancer
+resource "aws_lb" "app_load_balancer" {
+  name               = "tf-app-load-balancer"
+  load_balancer_type = "application"
+  subnets            = data.aws_subnets.default.ids
+
+
+
+  //see sg resource for the ALB
+  security_groups = [aws_security_group.alb-sg.id]
+}
+
+/* ALB consist of several part
+
+ listener
+ listener rule
+ target groups
+*/
+
+// create listerner for the ALB
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.app_load_balancer.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "fixed-response"
+
+    fixed_response {
+      content_type = "text/plain"
+      status_code  = 404
+      message_body = "404: page not found"
+    }
+  }
+}
+
+// set SG for ALB
+resource "aws_security_group" "alb-sg" {
+  name = "tf-alb-sg"
+
+  // allow  inbound HTTP request
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+// ALB target group
+resource "aws_lb_target_group" "alb_target_group" {
+  name     = "tf-target-group-example"
+  port     = var.server_port
+  protocol = "HTTP"
+  vpc_id   = data.aws_vpc.default.id
+
+  health_check {
+    path                = "/"
+    protocol            = "HTTP"
+    matcher             = "200"
+    interval            = 15
+    timeout             = 3
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+  }
+
+}
+
+
+
+// Set ALB Listener rule
+resource "aws_lb_listener_rule" "alb_listener_rule" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100
+
+  condition {
+    path_pattern {
+      values = ["*"]
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.alb_target_group.arn
+  }
+
+}
+
+output "alb_dns_name" {
+  value       = aws_lb.app_load_balancer.name
+  description = "The domain name of the load balancer"
+}
