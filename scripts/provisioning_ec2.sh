@@ -1,8 +1,10 @@
 #!/bin/bash
-    apt-get update -y
-    apt-get install busybox -y
-
-    mkdir -p /var/www
-    echo "Hello from BusyBox!" > /var/www/index.html
     
-    nohub busybox -f -h /var/www -p ${var.server_port} -v
+    # this script works for ubuntu/debian 
+
+    apt-get update -y
+    apt-get install -y apache2
+
+    systemctl enable --now apache2
+    
+    echo "<h1>Hello from $(hostname -f)</h1>" > /var/www/html/index.html
