@@ -33,7 +33,7 @@ variable "server_ami" {
 variable "server_port" {
   description = "The port the server will use for HTTP request"
   type        = number
-  default     = 8080
+  default     = 80
 }
 
 data "http" "my_ip" {
@@ -50,25 +50,27 @@ resource "aws_security_group" "ec2_demo_sg" {
 
   # Allow HTTP from anywhere
   ingress {
-    description = "HTTP from internet"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [aws_security_group.demo_alb_security_group.id]
+    description     = "HTTP from internet"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.demo_alb_security_group.id]
+    #cidr_blocks = [aws_security_group.demo_alb_security_group.id]
   }
 
   # Allow HTTPS from anywhere
   ingress {
-    description = "HTTPS from internet"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "HTTPS from internet"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.demo_alb_security_group.id]
+    #cidr_blocks = ["0.0.0.0/0"]
   }
 
   # Allow SSH from the office network only
   ingress {
-    description = "SSH from home"
+    description = "SSH from my laptop in the office"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -95,6 +97,7 @@ resource "aws_launch_template" "demo_launch_template" {
 
 // Auto Scaling Group require a configuration to be launched. What you configure here is the EC2 instanes that will integrate 
 // the groups of EC2 instances for the ASG
+
 
 resource "aws_autoscaling_group" "demo_autoscaling_group" {
 
@@ -187,7 +190,7 @@ resource "aws_security_group" "demo_alb_security_group" {
   }
 }
 
-// ALB target group
+// ALB target grouptarget
 resource "aws_lb_target_group" "demo_alb_target_group" {
   name     = "DEMO-ALB-TG"
   port     = var.server_port
@@ -224,7 +227,7 @@ resource "aws_lb_listener_rule" "demo_alb_listener_rule" {
 
 }
 
-output "alb_dns_name" {
+output "alb_name" {
   value       = aws_lb.demo_application_load_balancer.name
   description = "The domain name of the load balancer"
 }
@@ -232,4 +235,9 @@ output "alb_dns_name" {
 output "local_ip_address" {
   value       = chomp(data.http.my_ip.response_body)
   description = "Local IP Address"
+}
+
+output "alb_dns_name" {
+  value       = aws_lb.demo_application_load_balancer.dns_name
+  description = "ALB dns name"
 }
