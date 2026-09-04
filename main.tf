@@ -21,7 +21,7 @@ provider "aws" {
 variable "provisioning_ec2" {
   description = "Path to the script that will install first set up in the server."
   type        = string
-  default     = "/scripts/ec2_dependecies.sh"
+  default     = "scripts/provisioning_ec2.sh"
 }
 
 variable "server_ami" {
@@ -78,6 +78,14 @@ resource "aws_security_group" "ec2_demo_sg" {
     #Only current IP address will have access to ec2 from ssh 
     cidr_blocks = ["${chomp(data.http.my_ip.response_body)}/32"]
   }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
 }
 
 // aws launch configuration is deprecated, use aws template 
@@ -88,11 +96,12 @@ resource "aws_launch_template" "demo_launch_template" {
   instance_type          = "t3.micro"
   vpc_security_group_ids = [aws_security_group.ec2_demo_sg.id]
 
+
   lifecycle {
     create_before_destroy = true
   }
 
-  user_data = base64encode(var.provisioning_ec2)
+  user_data = base64encode(file(var.provisioning_ec2))
 }
 
 // Auto Scaling Group require a configuration to be launched. What you configure here is the EC2 instanes that will integrate 
@@ -100,18 +109,22 @@ resource "aws_launch_template" "demo_launch_template" {
 
 
 resource "aws_autoscaling_group" "demo_autoscaling_group" {
-
+  name = "DEMO-AS"
+  #name_prefix = "v1-"
   vpc_zone_identifier = data.aws_subnets.default.ids
+  target_group_arns   = [aws_lb_target_group.demo_alb_target_group.arn]
 
   launch_template {
     id      = aws_launch_template.demo_launch_template.id
     version = "$Latest"
   }
 
+
   //launch_configuration = aws_launch_configuration.asg_launch_configuration.name
   desired_capacity = 2
   min_size         = 1
   max_size         = 4
+
 
 }
 
@@ -140,7 +153,8 @@ data "aws_subnets" "default" {
 resource "aws_lb" "demo_application_load_balancer" {
   name               = "DEMO-ALB"
   load_balancer_type = "application"
-  subnets            = data.aws_subnets.default.ids
+
+  subnets = data.aws_subnets.default.ids
 
   //see sg resource for the ALB
   security_groups = [aws_security_group.demo_alb_security_group.id]
@@ -182,6 +196,13 @@ resource "aws_security_group" "demo_alb_security_group" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -192,10 +213,11 @@ resource "aws_security_group" "demo_alb_security_group" {
 
 // ALB target grouptarget
 resource "aws_lb_target_group" "demo_alb_target_group" {
-  name     = "DEMO-ALB-TG"
-  port     = var.server_port
-  protocol = "HTTP"
-  vpc_id   = data.aws_vpc.default.id
+  name        = "DEMO-ALB-TG"
+  port        = var.server_port
+  target_type = "instance"
+  protocol    = "HTTP"
+  vpc_id      = data.aws_vpc.default.id
 
   health_check {
     path                = "/"
